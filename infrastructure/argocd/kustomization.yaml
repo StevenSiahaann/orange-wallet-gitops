@@ -1,0 +1,25 @@
+---
+# =============================================================================
+# Kustomization - ArgoCD Infrastructure
+# =============================================================================
+# ArgoCD server ingress for web UI and API access.
+#
+# Access: https://argocd.orangebybni.my.id
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: argocd
+
+# Resources
+resources:
+  - ingress.yaml
+  - service-patch.yaml  # Override service type from NodePort to ClusterIP
+
+# Labels applied to all resources
+labels:
+  - pairs:
+      app.kubernetes.io/name: argocd-server
+      app.kubernetes.io/part-of: argocd
+      app.kubernetes.io/managed-by: kustomize

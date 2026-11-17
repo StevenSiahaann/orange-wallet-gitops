@@ -1,0 +1,198 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: api-gateway
+  namespace: orange-wallet
+  labels:
+    app: api-gateway
+    component: gateway
+    tier: edge
+    version: v1
+spec:
+  replicas: 1  # HPA will scale to max 2 based on load
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: api-gateway
+      component: gateway
+
+  template:
+    metadata:
+      labels:
+        app: api-gateway
+        component: gateway
+        tier: edge
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+
+    spec:
+      nodeSelector:
+        workload-type: stateless
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: api-gateway
+          image: teukumunawar/orange-wallet-api-gateway:latest
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            # Application
+            - name: SERVER_PORT
+              value: "8080"
+
+            - name: SPRING_APPLICATION_NAME
+              value: "api-gateway"
+
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+
+            # Spring Cloud Config
+            - name: SPRING_CONFIG_IMPORT
+              value: "configserver:http://cloud-config-server.orange-wallet.svc.cluster.local:8888"
+
+            # Backend Service URLs
+            - name: AUTHENTICATION_SERVICE_URL
+              value: "http://authentication-service.orange-wallet.svc.cluster.local:8080"
+
+            - name: USER_SERVICE_URL
+              value: "http://user-service.orange-wallet.svc.cluster.local:8080"
+
+            - name: WALLET_SERVICE_URL
+              value: "http://wallet-service.orange-wallet.svc.cluster.local:8080"
+
+            - name: TRANSACTION_SERVICE_URL
+              value: "http://transaction-service.orange-wallet.svc.cluster.local:8080"
+
+            - name: ML_ENGINE
+              value: "http://ml-engine.orange-wallet.svc.cluster.local:8080"
+
+            # Redis Configuration
+            - name: REDIS_HOST
+              valueFrom:
+                secretKeyRef:
+                  name: redis-connection
+                  key: host
+
+            - name: REDIS_PORT
+              valueFrom:
+                secretKeyRef:
+                  name: redis-connection
+                  key: port
+
+            - name: REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-connection
+                  key: password
+
+            - name: SPRING_DATA_REDIS_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: redis-connection
+                  key: password
+
+            # Gateway Configuration
+            - name: SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_HTTPCLIENT_CONNECT_TIMEOUT
+              value: "10000"
+
+            - name: SPRING_CLOUD_GATEWAY_SERVER_WEBFLUX_HTTPCLIENT_RESPONSE_TIMEOUT
+              value: "60s"
+
+            - name: SPRING_HTTP_CODECS_MAX_IN_MEMORY_SIZE
+              value: "2MB"
+
+            # HTTP/2 and Compression
+            - name: SERVER_HTTP2_ENABLED
+              value: "true"
+
+            - name: SERVER_COMPRESSION_ENABLED
+              value: "true"
+
+            # BNI Payment Provider API Key (for inquiry/callback endpoints)
+            - name: BNI_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: external-api-keys
+                  key: bni-va-api-key
+
+            # Security, Circuit Breaker configs removed - now managed via Spring Cloud Config
+            # See: spring-cloud-configmap/api-gateway.yml and api-gateway-prod.yml
+
+            # JVM Options (Gateway uses WebFlux - different tuning)
+            - name: JAVA_OPTS
+              value: >-
+                -XX:+UseContainerSupport
+                -XX:MaxRAMPercentage=75.0
+                -XX:InitialRAMPercentage=50.0
+                -XX:+UseG1GC
+                -XX:MaxGCPauseMillis=200
+                -XX:+HeapDumpOnOutOfMemoryError
+                -XX:HeapDumpPath=/tmp/heapdump.hprof
+                -Duser.timezone=Asia/Jakarta
+                -Dreactor.netty.ioWorkerCount=4
+
+          resources:
+            requests:
+              cpu: 100m
+              memory: 384Mi
+            limits:
+              cpu: 500m
+              memory: 768Mi
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 5
+            successThreshold: 1
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 45
+            periodSeconds: 5
+            timeoutSeconds: 3
+            successThreshold: 1
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 60
+            periodSeconds: 10
+            timeoutSeconds: 10
+            successThreshold: 1
+            failureThreshold: 18
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

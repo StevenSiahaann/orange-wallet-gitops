@@ -1,0 +1,199 @@
+---
+# =============================================================================
+# Notification Worker - Deployment
+# =============================================================================
+# Handles WhatsApp notifications via WAHA and processes Kafka events
+#
+# Dependencies:
+# - Redis (caching)
+# - Kafka (event streaming)
+# - WAHA (WhatsApp API)
+# =============================================================================
+
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: notification-worker
+  namespace: orange-wallet
+  labels:
+    app: notification-worker
+    component: worker
+    tier: application
+    version: v1
+spec:
+  replicas: 1
+  strategy:
+    type: RollingUpdate
+    rollingUpdate:
+      maxSurge: 1
+      maxUnavailable: 0
+
+  selector:
+    matchLabels:
+      app: notification-worker
+      component: worker
+
+  template:
+    metadata:
+      labels:
+        app: notification-worker
+        component: worker
+        tier: application
+        version: v1
+      annotations:
+        prometheus.io/scrape: "true"
+        prometheus.io/port: "8080"
+        prometheus.io/path: "/actuator/prometheus"
+
+    spec:
+      nodeSelector:
+        workload-type: stateless
+
+      securityContext:
+        runAsNonRoot: true
+        runAsUser: 1000
+        fsGroup: 1000
+
+      containers:
+        - name: notification-worker
+          image: teukumunawar/orange-wallet-notification-worker:latest
+          imagePullPolicy: Always
+
+          ports:
+            - name: http
+              containerPort: 8080
+              protocol: TCP
+
+          env:
+            # Application
+            - name: SERVER_PORT
+              value: "8080"
+
+            - name: SPRING_APPLICATION_NAME
+              value: "notification-worker"
+
+            - name: SPRING_PROFILES_ACTIVE
+              value: "prod"
+
+            # Spring Cloud Config
+            - name: SPRING_CONFIG_IMPORT
+              value: "configserver:http://cloud-config-server.orange-wallet.svc.cluster.local:8888"
+
+            # Redis Connection
+            - name: REDIS_HOST
+              value: "redis-client.database.svc.cluster.local"
+
+            - name: REDIS_PORT
+              value: "6379"
+
+            # Kafka
+            - name: KAFKA_BOOTSTRAP_SERVERS
+              valueFrom:
+                configMapKeyRef:
+                  name: kafka-config
+                  key: bootstrap-servers
+
+            # Gmail SMTP Configuration
+            - name: MAIL_HOST
+              value: "smtp.gmail.com"
+
+            - name: MAIL_PORT
+              value: "587"
+
+            - name: MAIL_USERNAME
+              valueFrom:
+                secretKeyRef:
+                  name: gmail-smtp-credentials
+                  key: username
+
+            - name: MAIL_PASSWORD
+              valueFrom:
+                secretKeyRef:
+                  name: gmail-smtp-credentials
+                  key: password
+
+            - name: USER_SERVICE_URL
+              value: "http://user-service.orange-wallet.svc.cluster.local:8080"
+
+            # WAHA Configuration
+            - name: WAHA_BASE_URL
+              value: "http://waha.orange-wallet.svc.cluster.local:3000"
+
+            - name: WAHA_API_KEY
+              valueFrom:
+                secretKeyRef:
+                  name: external-api-keys
+                  key: waha-api-key
+
+            - name: WAHA_WEBHOOK_HMAC_SECRET
+              valueFrom:
+                secretKeyRef:
+                  name: waha-secrets
+                  key: webhook-hmac-secret
+
+            # Kafka Consumer Tuning
+            - name: SPRING_KAFKA_LISTENER_CONCURRENCY
+              value: "3"  # Limit concurrent consumers to reduce memory pressure
+
+            # JVM Options
+            - name: JAVA_OPTS
+              value: >-
+                -XX:+UseContainerSupport
+                -XX:MaxRAMPercentage=75.0
+                -XX:InitialRAMPercentage=50.0
+                -XX:+UseG1GC
+                -XX:MaxGCPauseMillis=200
+                -XX:TieredStopAtLevel=1
+                -XX:+HeapDumpOnOutOfMemoryError
+                -XX:HeapDumpPath=/tmp/heapdump.hprof
+                -Duser.timezone=Asia/Jakarta
+                -Dspring.jmx.enabled=false
+
+          resources:
+            requests:
+              cpu: 250m
+              memory: 768Mi
+            limits:
+              cpu: 500m
+              memory: 1536Mi  # Increased from 1Gi to prevent OOM
+
+          livenessProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 90  # Increased for WhatsApp session init
+            periodSeconds: 10
+            timeoutSeconds: 10  # Increased to prevent timeout during rebalancing
+            successThreshold: 1
+            failureThreshold: 3
+
+          readinessProbe:
+            httpGet:
+              path: /actuator/health/readiness
+              port: 8080
+            initialDelaySeconds: 60  # Increased for safe startup
+            periodSeconds: 5
+            timeoutSeconds: 5  # Increased for stability
+            successThreshold: 1
+            failureThreshold: 3
+
+          startupProbe:
+            httpGet:
+              path: /actuator/health/liveness
+              port: 8080
+            initialDelaySeconds: 90  # Match liveness initial delay
+            periodSeconds: 10
+            timeoutSeconds: 10  # Increased for safe startup
+            successThreshold: 1
+            failureThreshold: 40
+
+          volumeMounts:
+            - name: tmp
+              mountPath: /tmp
+
+      volumes:
+        - name: tmp
+          emptyDir: {}
+
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

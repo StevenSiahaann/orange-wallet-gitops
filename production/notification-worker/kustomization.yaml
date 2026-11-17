@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# Production Overlay - Notification Worker
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orange-wallet
+resources:
+  - ../../base/notification-worker
+images:
+  - name: teukumunawar/orange-wallet-notification-worker
+    newName: docker.io/teukumunawar/orange-wallet-notification-worker
+    newTag: ca8cf43375d22a108eef8f34285ef7178b9b72c0 # CI/CD will update this with commit SHA

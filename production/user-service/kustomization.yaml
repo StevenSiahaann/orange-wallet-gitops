@@ -1,0 +1,14 @@
+---
+# =============================================================================
+# Production Overlay - User Service
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+namespace: orange-wallet
+resources:
+  - ../../base/user-service
+images:
+  - name: teukumunawar/orange-wallet-user-service
+    newName: docker.io/teukumunawar/orange-wallet-user-service
+    newTag: ba769c5f774fad1a133a890ee677860611725c96 # CI/CD will update this with commit SHA

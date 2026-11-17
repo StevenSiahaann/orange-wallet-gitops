@@ -1,0 +1,21 @@
+---
+# =============================================================================
+# Kustomization - Wallet Service
+# =============================================================================
+
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+namespace: orange-wallet
+
+resources:
+  - deployment.yaml
+  - service.yaml
+  - configmap.yaml
+  - hpa.yaml
+
+labels:
+  - pairs:
+      app.kubernetes.io/name: wallet-service
+      app.kubernetes.io/part-of: orange-wallet
+      app.kubernetes.io/managed-by: kustomize
